@@ -1,6 +1,7 @@
 ﻿using System;
+using System.ComponentModel;
 using System.IO;
-using System.Net.Http;
+using System.Net;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using MaterialSkin;
@@ -8,84 +9,17 @@ using MaterialSkin.Controls;
 
 namespace Asynchronous_File_Downloader
 {
-    public class ProgressChangedEventArgs : EventArgs
-    {
-        public long DownloadedBytes { get; }
-        public long TotalBytes { get; }
-
-        public ProgressChangedEventArgs(long downloadedBytes, long totalBytes)
-        {
-            DownloadedBytes = downloadedBytes;
-            TotalBytes = totalBytes;
-        }
-    }
-
-    public class AsyncFileDownloader
-    {
-        public delegate void ProgressChangedEventHandler(object sender, ProgressChangedEventArgs e);
-        public event ProgressChangedEventHandler ProgressChanged;
-
-        public async Task DownloadFileAsync(string url, string destinationPath)
-        {
-            using (var httpClient = new HttpClient())
-            using (var fileStream = File.OpenWrite(destinationPath))
-            {
-                var response = await httpClient.GetAsync(url);
-                response.EnsureSuccessStatusCode();
-
-                var totalBytes = response.Content.Headers.ContentLength ?? -1L;
-                long downloadedBytes = 0;
-
-                using (var contentStream = await response.Content.ReadAsStreamAsync())
-                {
-                    byte[] buffer = new byte[4096];
-                    int bytesRead;
-                    while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                    {
-                        await fileStream.WriteAsync(buffer, 0, bytesRead);
-                        downloadedBytes += bytesRead;
-
-                        // Raise progress notification
-                        OnProgressChanged(new ProgressChangedEventArgs(downloadedBytes, totalBytes));
-                    }
-                }
-            }
-        }
-
-        protected virtual void OnProgressChanged(ProgressChangedEventArgs e)
-        {
-            ProgressChanged?.Invoke(this, e);
-        }
-    }
-
     public partial class Form1 : MaterialForm
     {
-        private AsyncFileDownloader downloader;
-
         public Form1()
         {
             InitializeComponent();
-
-            // Initialize the AsyncFileDownloader
-            downloader = new AsyncFileDownloader();
-            downloader.ProgressChanged += Downloader_ProgressChanged;
         }
 
-        private void Downloader_ProgressChanged(object sender, ProgressChangedEventArgs e)
+        private async void downloadBtn_Click(object sender, EventArgs e)
         {
-            double progress = (double)e.DownloadedBytes / e.TotalBytes * 100;
-            progressLabel.Text = $"Progress: {progress:F2}%";
-            materialProgressBar1.Value = (int)progress;
-        }
-
-        private async void materialButton1_Click(object sender, EventArgs e)
-        {
-            // Specify the URL and destination path
-            string url = "https://example.com/large-file.zip";
-            string destinationPath = "C:\\downloads\\large-file.zip";
-
-            // Trigger file download
-            await downloader.DownloadFileAsync(url, destinationPath);
+            downloadBtn.Enabled = false;
+            await Task.Run(() => backgroundWorker1.RunWorkerAsync());
         }
 
         private void materialProgressBar1_Click(object sender, EventArgs e)
@@ -93,9 +27,120 @@ namespace Asynchronous_File_Downloader
             // Handle click event if needed
         }
 
-        private void materialLabel1_Click(object sender, EventArgs e)
+        private void progressLabel_Click(object sender, EventArgs e)
         {
             // Handle click event if needed
+        }
+
+        private void materialLabel1_Click_1(object sender, EventArgs e)
+        {
+        }
+
+        private void materialTextBox1_TextChanged(object sender, EventArgs e)
+        {
+        }
+
+        private void materialTextBox21_Click(object sender, EventArgs e)
+        {
+        }
+
+        private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            // Reset UI state
+            downloadBtn.Enabled = true;
+            materialProgressBar1.Value = 0;
+            progressLabel.Text = "0%";
+
+            if (e.Error != null)
+            {
+                MessageBox.Show($"Error: {e.Error.Message}", "Download Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            else
+            {
+                MessageBox.Show("Download Complete", "Download Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private async void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
+        {
+            await DownloadFileWithProgressAsync(materialTextBox1.Text, materialTextBox21.Text, materialProgressBar1, progressLabel);
+        }
+
+        private async Task DownloadFileWithProgressAsync(string downloadLink, string targetPath, ProgressBar progressBar, Label labelProgress)
+        {
+            int bytesProcessed = 0;
+            Stream remoteStream = null;
+            Stream localStream = null;
+            WebResponse response = null;
+
+            try
+            {
+                WebRequest request = WebRequest.Create(downloadLink);
+                if (request != null)
+                {
+                    double totalBytesToReceive = 0;
+                    var sizeWebRequest = (HttpWebRequest)WebRequest.Create(downloadLink);
+                    sizeWebRequest.Method = "HEAD";
+
+                    using (var webResponse = await sizeWebRequest.GetResponseAsync())
+                    {
+                        var fileSize = webResponse.Headers.Get("Content-Length");
+                        totalBytesToReceive = Convert.ToDouble(fileSize);
+                    }
+
+                    response = await request.GetResponseAsync();
+                    if (response != null)
+                    {
+                        remoteStream = response.GetResponseStream();
+                        string filePath = targetPath;
+                        localStream = File.Create(targetPath);
+
+                        byte[] buffer = new byte[1024];
+                        int bytesRead = 0;
+
+                        do
+                        {
+                            bytesRead = await remoteStream.ReadAsync(buffer, 0, buffer.Length);
+
+                            await localStream.WriteAsync(buffer, 0, bytesRead);
+
+                            bytesProcessed += bytesRead;
+
+                            double bytesIn = double.Parse(bytesProcessed.ToString());
+                            double percentage = bytesIn / totalBytesToReceive * 100;
+                            percentage = Math.Round(percentage, 0);
+
+                            if (progressBar.InvokeRequired)
+                            {
+                                progressBar.Invoke(new Action(() => progressBar.Value = int.Parse(Math.Truncate(percentage).ToString())));
+                            }
+                            else
+                            {
+                                progressBar.Value = int.Parse(Math.Truncate(percentage).ToString());
+                            }
+
+                            if (labelProgress.InvokeRequired)
+                            {
+                                labelProgress.Invoke(new Action(() => labelProgress.Text = int.Parse(Math.Truncate(percentage).ToString()) + "%"));
+                            }
+                            else
+                            {
+                                labelProgress.Text = int.Parse(Math.Truncate(percentage).ToString()) + "%";
+                            }
+                        } while (bytesRead > 0);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
+            finally
+            {
+                if (response != null) response.Close();
+                if (remoteStream != null) remoteStream.Close();
+                if (localStream != null) localStream.Close();
+            }
         }
     }
 }
